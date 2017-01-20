@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <!-- This title is not used. -->
+    <title>Rename &amp; Redirect</title> 
+    
+    <!-- Use Bootstrap to match the look of OU Campus. -->
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css" integrity="sha384-1q8mTJOASx8j1Au+a5WDVnPi2lkFfwwEAa8hDDdjZlpLegxhjVME1fgjWPGmkzs7" crossorigin="anonymous" />
+
+    <link rel="stylesheet" href="css/app.css" />
+    
+    <!-- jQuery IS REQUIRED for gadgetlib.js to work. -->
+		<script type="text/javascript" src="https://code.jquery.com/jquery-2.2.0.min.js"></script>
+    
+    <!-- gadgetlib.js is a library of basic functions that gadgets can use. -->
+    <script type="text/javascript" src="js/gadgetlib.min.js"></script>
+
+    <!-- moment.js for simple date/time manipulation -->
+    <script type="text/javascript" src="js/moment.min.js"></script>
+</head>
+<body>
+    <div id="main">
+        <form id="rename-redirect-gadget">
+            <fieldset>
+                <label for="new-name">New Page Name</label>
+                <input id="new-name" class="form-control" type="text" />
+            </fieldset>
+            <button type="button" id="rename-btn" class="btn btn-success" style="width:100%">Rename</button>
+        </form>
+    </div>
+
+    <!--
+        The following hidden div is only needed if you'll be editing your gadget in
+        OU Campus's source code editor. OU Campus automatically adds a DirectEdit link
+        to HTML files that you edit in OU Campus. This div hides the DirectEdit link.
+    -->
+    <div style="display:none">
+        <!-- ouc:ob --><!-- /ouc:ob -->
+    </div>
+
+    <script type="text/javascript">
+        $(document).ready(function () {
+            gadget.ready().then(function () {
+                const apiHost = gadget.get("apihost");
+				const authToken = gadget.get("token");
+                const site = gadget.get("site");
+                
+                var isRenameFromGadget = false;
+                var newName;
+                var currentName;
+                var currentPath;
+                var currentDirectory;
+                var currentUrl;
+                
+                resetGadget();
+
+                $("#rename-btn").on("click", function () {
+                    isRenameFromGadget = true;
+                    newName = $("#new-name").val();
+
+                    // Step 1: validate filename
+                    // get site settings for filename regex
+                    var data = {
+                        "authorization_token" : authToken,
+                        "site" : site
+                    };
+
+                    $.get(apiHost + "/sites/view", data)
+                        .done( function(siteInfo) {
+                            //console.log("Site info: " + siteInfo);
+
+                            var regex = new RegExp(siteInfo.file_regex);
+                            if (!regex.test(newName)) {
+                                // TODO: improve presentation of error message
+                                alert(siteInfo.file_regex_desc);
+                                return;
+                            }
+
+                            // Step 2: rename file
+                            var data = {
+                                "authorization_token" : authToken,
+                                "site" : site,
+                                "path" : currentPath,
+                                "filename" : newName + ".pcf",
+                                "remote" : false
+                            }
+                            
+                            $.post(apiHost + "/files/rename", data)
+                                .done( function(results) {
+                                    //console.log("Renamed page successfully!", results);
+
+                                    // NOTE: .done() does not actually fire when the rename has finished, only that the operation has kicked off.
+                                    // Instead, we have to listen for the event $(gadget).on("rename") below for the file rename to be completed.
+                                })
+                                .fail( function(error) {
+                                    console.log("Error renaming file: ", error);
+                                    return;
+                                });
+                        })
+                        .fail( function(error) {
+                            console.log("Error getting site info", error);
+                            return;
+                        });
+                }); // $("#rename-btn").on("click")
+
+                $(gadget).on("rename", function (evt, data) {
+                    if (!isRenameFromGadget)
+                        return;
+                    
+                    //console.log("File renamed", data);
+                    
+                    // Step 3: create new file with old name
+                    var data = {
+                        "authorization_token" : authToken,
+                        "site" : site,
+                        "tcf_value_0": currentName, // TODO: this is supposed to be the page name, not filename
+                        "tcf_value_1" : "",
+                        "tcf_value_2" : false,
+                        "tcf_value_3" : currentName,
+                        "path" : currentDirectory,
+                        "template" : "interior.tcf",
+                        "submit" : "Create"
+                    }
+
+                    $.post(apiHost + "/templates/new", data)
+                        .done( function(results) {
+                            //console.log("New page created", results);
+                            
+                            var redirectUrl = currentUrl.replace(currentName, newName);
+                            var redirectText = "<script>window.location = '" + redirectUrl + "';\x3C/script>";
+
+                            // Step 4: add redirect on old page
+                            var data = {
+                                "authorization_token" : authToken,
+                                "site" : site,
+                                "path" : currentPath,
+                                "text" : redirectText,
+                                "label" : "maincontent",
+                                "wysiwyg" : true
+                            }
+
+                            $.post(apiHost + "/files/save", data)
+                                .done( function(results) {
+                                    //console.log("Redirect saved", results);
+
+                                    // Step 5: first publish the new page (we can't do it after the expiration is set)
+                                    var data = {
+                                        "authorization_token" : authToken,
+                                        "site" : site,
+                                        "path" : currentPath,
+                                        "log" : "",
+                                        "target" : site,
+                                        "tweet" : "",
+                                        "wall_post" : ""
+                                    }
+
+                                    $.post(apiHost + "/files/publish", data)
+                                        .done( function(results) {
+                                            //console.log("Page published", results);
+
+                                            // Step 6: set old page to expire in 3 months
+                                            var expiration = moment().add(3, "months").format("YYYY-MM-DD[T]00:00:00.000[Z]");
+                                            
+                                            var data = {
+                                                "authorization_token" : authToken,
+                                                "site" : site,
+                                                "date" : expiration,
+                                                "recipient" : "",
+                                                "subject" : "",
+                                                "content" : "",
+                                                "send_email" : false,
+                                                "sched_exp" : "",
+                                                "exp_type" : "delete",
+                                                "path" : currentPath
+                                            }
+
+                                            $.post(apiHost + "/scheduledexpirations/new", data)
+                                                .done( function(results) {
+                                                    //console.log("Page expiration saved", results);
+
+                                                    gadget.oucSetCurrentLocation("/previewedit" + currentDirectory + "/" + newName + ".pcf");
+                                                })
+                                                .fail( function(error) {
+                                                    console.log("Error saving page expiration: ", error);
+                                                });
+                                        })
+                                        .fail( function(error) {
+                                            console.log("Error publishing page: ", error);
+                                        });                                    
+                                })
+                                .fail( function(error) {
+                                    console.log("Error saving redirect: ", error);
+                                });
+                        })
+                        .fail( function(error) {
+                            console.log("Error creating new page: ", error);
+                        });
+                }); // $(gadget).on("rename")
+
+                $(gadget).on("view_changed", function (evt) {
+                    //console.log("view changed");
+                    resetGadget();
+                });
+
+                function resetGadget() {
+                    gadget.oucGetCurrentFileInfo().then( function(fileInfo) {
+                        if (fileInfo == null)
+                            return;
+                        
+                        //console.log("Current file info: ", fileInfo);
+                        currentName = fileInfo.filename.replace(".pcf", "");
+                        currentPath = fileInfo.stagingPath;
+                        currentDirectory = fileInfo.stagingPath.substring(0, fileInfo.stagingPath.lastIndexOf("/"));
+                        currentUrl = fileInfo.productionUrl;
+                        $("#new-name").val(currentName);
+                        isRenameFromGadget = false;
+                    });
+                }
+
+            }); // gadget.ready()
+
+        }); // document.ready()
+    </script>
+</body>
+</html>

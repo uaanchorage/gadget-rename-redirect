@@ -1,0 +1,17 @@
+form {
+  margin: 0 8px;
+}
+
+fieldset {
+  margin-bottom: 30px !important;
+}
+
+label {
+  font-size: 12px;
+  margin-bottom: 0px;
+  font-weight: bold;
+}
+
+input {
+  width: 196px !important;
+}
